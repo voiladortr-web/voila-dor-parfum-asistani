@@ -92,7 +92,9 @@ ${URUNLER.map((u, i) => `${i + 1}. Orijinal: "${u.original}" → Voilà D'or: "$
 
 7. **Dil:** Türkçe yaz. Sıcak, samimi ve profesyonel ol.
 
-8. Eğer katalogda hiç uygun ürün yoksa bunu dürüstçe söyle ve mevcut en yakın alternatifleri sun.`;
+8. **KESİNLİKLE YASAK:** Yanıtlarında hiçbir zaman # (diyez) işareti kullanma. Başlık yapma. Sadece düz metin ve **kalın** yazı kullan.
+
+9. Eğer katalogda hiç uygun ürün yoksa bunu dürüstçe söyle ve mevcut en yakın alternatifleri sun.`;
 
 // ── Basit Rate Limiter ─────────────────────────────────────
 const rateLimitStore = {};
