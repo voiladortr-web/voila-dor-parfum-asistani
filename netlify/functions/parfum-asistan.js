@@ -232,7 +232,7 @@ exports.handler = async (event) => {
     if (!claudeYanit.ok) {
       const hataDetay = await claudeYanit.text().catch(() => '');
       console.error('Claude API hatası:', claudeYanit.status, hataDetay);
-      throw new Error('Claude API hatası: ' + claudeYanit.status);
+      throw new Error('API_' + claudeYanit.status + ': ' + hataDetay.slice(0, 300));
     }
 
     const data = await claudeYanit.json();
@@ -253,7 +253,7 @@ exports.handler = async (event) => {
     const mesajMetni =
       err.name === 'AbortError'
         ? 'Yanıt biraz uzun sürdü. Lütfen tekrar deneyin.'
-        : 'Sunucu hatası. Lütfen tekrar deneyin.';
+        : 'TESHIS: ' + err.message;
     return {
       statusCode: 500,
       headers,
