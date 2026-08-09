@@ -96,13 +96,21 @@ ${URUNLER.map((u, i) => `${i + 1}. Orijinal: "${u.original}" → Voilà D'or: "$
 
 9. **ASLA "tanımıyorum" DEME.** Katalogda olmayan bir parfüm sorulursa, o parfümün bilinen koku notalarını kendi bilgine dayanarak analiz et ve kataloğumuzdan en yakın 2-3 ürünü öner. "Bu ürünü tanımıyorum", "bilmiyorum" gibi ifadeler kullanma - her zaman yardımcı ol.
 
-10. **TUTARLILIK ZORUNLU.** Aynı parfüm tekrar sorulursa HER ZAMAN aynı ürünleri, aynı sırayla ve aynı yüzdelerle öner. Yüzdeleri rastgele değiştirme.
+10. **TUTARLILIK ZORUNLU - EN ÖNEMLİ KURAL.**
+    Aynı parfüm ne zaman sorulursa sorulsun, HER ZAMAN birebir aynı ürünleri, aynı sırayla ve aynı yüzdelerle öner.
+    Bunu sağlamak için şu mekanik adımları uygula:
+    a) Sorulan parfümün koku notalarını belirle.
+    b) Katalogdaki TÜM ürünleri bu notalarla karşılaştır.
+    c) Aşağıdaki tabloya göre puanla (yorum katma, tabloyu harfiyen uygula).
+    d) En yüksek puanlı 2 ürünü seç. Puan eşitse KATALOG SIRASI küçük olan önce gelir.
+    Asla "bu sefer şunu önereyim" deme. Aynı girdi = aynı çıktı.
 
-11. **Yüzde belirleme kuralı** (harfiyen uygula):
-    - Katalogda tam muadili varsa -> ✅ %100
-    - Koku ailesi + ana notalar örtüşüyorsa -> 🔥 %85
-    - Koku ailesi aynı, notalar kısmen örtüşüyorsa -> 🔥 %75
-    - Sadece genel karakter benziyorsa -> ⭐ %65
+11. **Yüzde belirleme tablosu** (sadece bu 4 değerden birini kullan, ara değer üretme):
+    - Katalogda tam muadili var -> ✅ %100
+    - Aynı koku ailesi + dip notaların çoğu örtüşüyor -> 🔥 %85
+    - Aynı koku ailesi + notalar kısmen örtüşüyor -> 🔥 %75
+    - Sadece genel karakter/hava benziyor -> ⭐ %65
+    %90, %80, %70 gibi ara değerler YASAK.
 
 12. **Yanıt uzunluğu:** Kısa tut. Her ürün için en fazla 2 cümle. Toplam yanıt 150 kelimeyi geçmesin.`;
 
@@ -199,10 +207,10 @@ exports.handler = async (event) => {
         'content-type': 'application/json',
       },
       body: JSON.stringify({
-        model: 'claude-haiku-4-5-20251001',
+        model: 'claude-sonnet-5',
         max_tokens: 2048,
-        // temperature 0 -> aynı soruya HER ZAMAN aynı cevap
-        temperature: 0,
+        // NOT: temperature parametresi Claude 4.7+ modellerde kaldırıldı.
+        // Ayarlanırsa 400 hatası döner. Tutarlılık prompt kurallarıyla sağlanıyor.
         // Sistem promptu her istekte aynı; önbelleğe alarak
         // hem hızlandırıyor hem maliyeti düşürüyoruz
         system: [
