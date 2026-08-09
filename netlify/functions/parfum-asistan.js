@@ -94,11 +94,21 @@ ${URUNLER.map((u, i) => `${i + 1}. Orijinal: "${u.original}" → Voilà D'or: "$
 
 8. **KESİNLİKLE YASAK:** Yanıtlarında hiçbir zaman # (diyez) işareti kullanma. Başlık yapma. Sadece düz metin ve **kalın** yazı kullan.
 
-9. Eğer katalogda hiç uygun ürün yoksa bunu dürüstçe söyle ve mevcut en yakın alternatifleri sun.`;
+9. **ASLA "tanımıyorum" DEME.** Katalogda olmayan bir parfüm sorulursa, o parfümün bilinen koku notalarını kendi bilgine dayanarak analiz et ve kataloğumuzdan en yakın 2-3 ürünü öner. "Bu ürünü tanımıyorum", "bilmiyorum" gibi ifadeler kullanma - her zaman yardımcı ol.
+
+10. **TUTARLILIK ZORUNLU.** Aynı parfüm tekrar sorulursa HER ZAMAN aynı ürünleri, aynı sırayla ve aynı yüzdelerle öner. Yüzdeleri rastgele değiştirme.
+
+11. **Yüzde belirleme kuralı** (harfiyen uygula):
+    - Katalogda tam muadili varsa -> ✅ %100
+    - Koku ailesi + ana notalar örtüşüyorsa -> 🔥 %85
+    - Koku ailesi aynı, notalar kısmen örtüşüyorsa -> 🔥 %75
+    - Sadece genel karakter benziyorsa -> ⭐ %65
+
+12. **Yanıt uzunluğu:** Kısa tut. Her ürün için en fazla 2 cümle. Toplam yanıt 150 kelimeyi geçmesin.`;
 
 // ── Basit Rate Limiter ─────────────────────────────────────
 const rateLimitStore = {};
-const MAKS_ISTEK_SAAT = 20;
+const MAKS_ISTEK_SAAT = 60;
 const PENCERE_MS = 60 * 60 * 1000; // 1 saat
 
 function rateLimitKontrol(ip) {
@@ -161,10 +171,28 @@ exports.handler = async (event) => {
     return { statusCode: 400, headers, body: JSON.stringify({ error: 'Mesaj boş olamaz.' }) };
   }
 
-  // Claude API çağrısı
+  // ── Konuşma geçmişini temizle ──────────────────────────────
+  // Anthropic API kuralı: mesaj dizisi MUTLAKA 'user' rolüyle başlamalı.
+  // Aksi halde 400 hatası döner ve asistan hiç cevap veremez.
+  let temizGecmis = Array.isArray(gecmis) ? gecmis.slice(-6) : [];
+  temizGecmis = temizGecmis.filter(
+    (m) => m && (m.role === 'user' || m.role === 'assistant') && typeof m.content === 'string' && m.content.trim()
+  );
+  while (temizGecmis.length && temizGecmis[0].role !== 'user') {
+    temizGecmis.shift();
+  }
+  if (temizGecmis.length && temizGecmis[temizGecmis.length - 1].role === 'user') {
+    temizGecmis.pop();
+  }
+
+  // ── Claude API çağrısı (timeout korumalı) ──────────────────
   try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 20000);
+
     const claudeYanit = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
+      signal: controller.signal,
       headers: {
         'x-api-key': process.env.ANTHROPIC_API_KEY,
         'anthropic-version': '2023-06-01',
@@ -172,21 +200,40 @@ exports.handler = async (event) => {
       },
       body: JSON.stringify({
         model: 'claude-haiku-4-5-20251001',
-        max_tokens: 1024,
-        system: SISTEM_PROMPTU,
+        max_tokens: 2048,
+        // temperature 0 -> aynı soruya HER ZAMAN aynı cevap
+        temperature: 0,
+        // Sistem promptu her istekte aynı; önbelleğe alarak
+        // hem hızlandırıyor hem maliyeti düşürüyoruz
+        system: [
+          {
+            type: 'text',
+            text: SISTEM_PROMPTU,
+            cache_control: { type: 'ephemeral' },
+          },
+        ],
         messages: [
-          ...gecmis.slice(-6), // son 3 tur konuşma bağlamı
+          ...temizGecmis,
           { role: 'user', content: mesaj.trim() },
         ],
       }),
     });
 
+    clearTimeout(timeoutId);
+
     if (!claudeYanit.ok) {
-      throw new Error(`Claude API hatası: ${claudeYanit.status}`);
+      const hataDetay = await claudeYanit.text().catch(() => '');
+      console.error('Claude API hatası:', claudeYanit.status, hataDetay);
+      throw new Error('Claude API hatası: ' + claudeYanit.status);
     }
 
     const data = await claudeYanit.json();
-    const yanit = data.content?.[0]?.text || 'Bir hata oluştu, lütfen tekrar deneyin.';
+    const yanit = data.content?.[0]?.text;
+
+    if (!yanit) {
+      console.error('Boş yanıt:', JSON.stringify(data).slice(0, 500));
+      throw new Error('Boş yanıt');
+    }
 
     return {
       statusCode: 200,
@@ -194,11 +241,15 @@ exports.handler = async (event) => {
       body: JSON.stringify({ yanit }),
     };
   } catch (err) {
-    console.error('Hata:', err.message);
+    console.error('Hata:', err.name, err.message);
+    const mesajMetni =
+      err.name === 'AbortError'
+        ? 'Yanıt biraz uzun sürdü. Lütfen tekrar deneyin.'
+        : 'Sunucu hatası. Lütfen tekrar deneyin.';
     return {
       statusCode: 500,
       headers,
-      body: JSON.stringify({ error: 'Sunucu hatası. Lütfen tekrar deneyin.' }),
+      body: JSON.stringify({ error: mesajMetni }),
     };
   }
 };
