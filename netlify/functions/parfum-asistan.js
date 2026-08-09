@@ -207,10 +207,13 @@ exports.handler = async (event) => {
         'content-type': 'application/json',
       },
       body: JSON.stringify({
-        model: 'claude-sonnet-5',
+        // Haiku 4.5 bilinçli tercih: temperature: 0 destekliyor (tutarlılık garantisi)
+        // ve Sonnet 5'ten çok daha hızlı. Sonnet 5 testinde 13-18 sn sürdü ve
+        // temperature desteklemediği için aynı soruya farklı cevaplar verdi.
+        model: 'claude-haiku-4-5-20251001',
         max_tokens: 2048,
-        // NOT: temperature parametresi Claude 4.7+ modellerde kaldırıldı.
-        // Ayarlanırsa 400 hatası döner. Tutarlılık prompt kurallarıyla sağlanıyor.
+        // temperature 0 -> aynı soruya HER ZAMAN aynı cevap
+        temperature: 0,
         // Sistem promptu her istekte aynı; önbelleğe alarak
         // hem hızlandırıyor hem maliyeti düşürüyoruz
         system: [
