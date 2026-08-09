@@ -126,6 +126,48 @@ ${URUNLER.map((u, i) => `${i + 1}. Orijinal: "${u.original}" → Voilà D'or: "$
 
 12. **Yanıt uzunluğu:** Kısa tut. Her ürün için en fazla 2 cümle. Toplam yanıt 150 kelimeyi geçmesin.`;
 
+// ── TAM MUADİL TESPİTİ (kod tarafı, deterministik) ─────────
+// Modelin "katalogda var mı" kararına güvenilmiyor; marka benzerliğine
+// bakıp uydurma %100 eşleşme veriyordu. Bu kararı artık kod veriyor.
+
+function normalize(s) {
+  return String(s || '')
+    .toLowerCase()
+    .replace(/ı/g, 'i').replace(/İ/g, 'i').replace(/i̇/g, 'i')
+    .replace(/ş/g, 's').replace(/ğ/g, 'g').replace(/ü/g, 'u')
+    .replace(/ö/g, 'o').replace(/ç/g, 'c')
+    .replace(/[éèê]/g, 'e').replace(/[àâ]/g, 'a').replace(/[îï]/g, 'i')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+}
+
+// Marka/dolgu kelimeleri: eşleşmede sayılmaz
+const DOLGU = new Set(['by','for','men','women','unisex','edp','edt','eau','de','du','la','le','the','parfum','parfums','toilette','intense']);
+
+// "BLACK ORCHID BY TOM FORD" -> ['black','orchid']
+function urunAdiKelimeleri(original) {
+  const adKismi = String(original).split(/\s+BY\s+/i)[0];
+  return normalize(adKismi).split(' ').filter((w) => w && !DOLGU.has(w));
+}
+
+// Müşterinin sorduğu parfüm katalogda TAM olarak var mı?
+// Kural: ürün adının TÜM anlamlı kelimeleri soruda geçmeli.
+// Birden fazla eşleşirse en uzun (en spesifik) olan kazanır.
+function tamMuadilBul(mesaj) {
+  const sorguKelimeleri = new Set(normalize(mesaj).split(' ').filter(Boolean));
+  let enIyi = null;
+  for (const u of URUNLER) {
+    const kelimeler = urunAdiKelimeleri(u.original);
+    if (!kelimeler.length) continue;
+    // En az bir kelime 4+ harf olmalı (rastgele eşleşmeyi önler)
+    if (!kelimeler.some((k) => k.length >= 4)) continue;
+    if (!kelimeler.every((k) => sorguKelimeleri.has(k))) continue;
+    const puan = kelimeler.join('').length;
+    if (!enIyi || puan > enIyi.puan) enIyi = { urun: u, puan };
+  }
+  return enIyi ? enIyi.urun : null;
+}
+
 // ── Basit Rate Limiter ─────────────────────────────────────
 const rateLimitStore = {};
 const MAKS_ISTEK_SAAT = 60;
@@ -205,6 +247,25 @@ exports.handler = async (event) => {
     temizGecmis.pop();
   }
 
+  // ── Kod tarafı tam-muadil kararı (model bunu DEĞİŞTİREMEZ) ──
+  const bulunan = tamMuadilBul(mesaj);
+  const kilavuz = bulunan
+    ? `[SİSTEM KARARI — KOŞULSUZ UY]
+Bu parfümün kataloğumuzda TAM MUADİLİ VAR: "${bulunan.voila}" (orijinali: "${bulunan.original}").
+Yanıtına "✅ %100 Uyum — **${bulunan.voila}**" ile başla ve bu ürünü tanıt.
+[/SİSTEM KARARI]
+
+Müşteri mesajı: `
+    : `[SİSTEM KARARI — KOŞULSUZ UY]
+Bu parfümün kataloğumuzda TAM MUADİLİ YOKTUR.
+Bu yüzden: "✅" işaretini ve "%100" ifadesini KESİNLİKLE KULLANMA. "tam muadili var" DEME.
+Yanıtına "Maalesef bu parfümün tam muadili kataloğumuzda bulunmuyor." cümlesiyle başla,
+ardından en yakın 2 alternatifi 🔥 %85 / 🔥 %75 / ⭐ %65 aralığında öner.
+Marka aynı diye eşleştirme yapma; sadece koku notalarına bak.
+[/SİSTEM KARARI]
+
+Müşteri mesajı: `;
+
   // ── Claude API çağrısı (timeout korumalı) ──────────────────
   try {
     const controller = new AbortController();
@@ -237,7 +298,7 @@ exports.handler = async (event) => {
         ],
         messages: [
           ...temizGecmis,
-          { role: 'user', content: mesaj.trim() },
+          { role: 'user', content: kilavuz + mesaj.trim() },
         ],
       }),
     });
