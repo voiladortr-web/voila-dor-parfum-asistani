@@ -232,11 +232,15 @@ exports.handler = async (event) => {
     if (!claudeYanit.ok) {
       const hataDetay = await claudeYanit.text().catch(() => '');
       console.error('Claude API hatası:', claudeYanit.status, hataDetay);
-      throw new Error('API_' + claudeYanit.status + ': ' + hataDetay.slice(0, 300));
+      throw new Error('Claude API hatası: ' + claudeYanit.status);
     }
 
     const data = await claudeYanit.json();
-    const yanit = data.content?.[0]?.text;
+    // Yeni modeller content dizisinde önce 'thinking' bloğu döndürebiliyor.
+    // Bu yüzden content[0] değil, type==='text' olan ilk bloğu alıyoruz.
+    const yanit = Array.isArray(data.content)
+      ? data.content.filter((b) => b && b.type === 'text' && b.text).map((b) => b.text).join('\n').trim()
+      : '';
 
     if (!yanit) {
       console.error('Boş yanıt:', JSON.stringify(data).slice(0, 500));
@@ -253,7 +257,7 @@ exports.handler = async (event) => {
     const mesajMetni =
       err.name === 'AbortError'
         ? 'Yanıt biraz uzun sürdü. Lütfen tekrar deneyin.'
-        : 'TESHIS: ' + err.message;
+        : 'Sunucu hatası. Lütfen tekrar deneyin.';
     return {
       statusCode: 500,
       headers,
