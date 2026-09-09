@@ -108,6 +108,11 @@ ${URUNLER.map((u, i) => `${i + 1}. Orijinal: "${u.original}" → Voilà D'or: "$
    karşılaştırma yapılırken anlamlıdır. Müşterinin tarifini kısaca tekrar edip kataloğumuzdan
    o tarife uyan 2–3 ürünü öner.
 
+2a. **Versiyon farkı.** "Libre" ile "Libre Intense", "Sauvage" ile "Sauvage Elixir",
+   "1 Million" ile "1 Million Lucky" AYNI parfüm değildir. Aynı ürüne iki farklı versiyon
+   için aynı oranı verme; %100 sadece sorulan versiyonun tam karşılığı katalogda varsa kullanılır.
+   Hangi versiyonun muadili olduğunu cevapta net biçimde belirt.
+
 4a. **Her zaman mesajı önce anla.** Cevabın açılış cümlesi, müşterinin ne sorduğuna uymalı:
    parfüm adı sorusu, koku tarifi, karşılaştırma, sohbet veya genel bir soru olabilir.
    Ezbere kalıp cümleyle başlama.
@@ -184,7 +189,21 @@ const SORU_DOLGUSU = new Set([
   'urun', 'urunu', 'stokta', 'fiyat', 'fiyati', 'notalari', 'nota',
   'gibi', 'tarzi', 'tarzinda', 'istiyorum', 'ariyorum', 'arayan', 'lazim',
   'seviyorum', 'tavsiye', 'oneri', 'onerir', 'sey', 'birsey', 'acaba', 'lutfen',
+  'yok', 'yokmu', 'varmi', 'varmu', 'satiyor', 'satiyormusunuz', 'bulunuyor',
 ]);
+
+// "varmı", "yokmu" gibi soru eki bitişik yazılmış kelimeleri de dolgu say.
+// Aksi halde "libre intense varmı" sorgusunda "varmi" fazladan kelime sayılıp
+// tam muadil %85'e düşüyordu.
+function dolguKelimeMi(w) {
+  if (!w) return true;
+  if (DOLGU.has(w) || SORU_DOLGUSU.has(w) || MARKALAR.has(w)) return true;
+  if (/^[0-9]+$/.test(w)) return true;
+  if (w.length <= 2) return true;
+  const m = w.match(/^(.+?)(mi|mu|mis|mus)$/);
+  if (m && m[1].length >= 2 && (SORU_DOLGUSU.has(m[1]) || DOLGU.has(m[1]))) return true;
+  return false;
+}
 
 // Katalogdaki orijinal parfümlerin markaları ("... BY TOM FORD" -> tom, ford).
 // Sorguda marka adı geçmesi normaldir, "fazladan kelime" sayılmaz.
@@ -202,9 +221,7 @@ for (const w of ['tom','ford','ysl','yves','saint','laurent','jpg','jean','paul'
 function fazladanKelimeVar(sorguKelimeleri, kullanilanlar) {
   for (const w of sorguKelimeleri) {
     if (kullanilanlar.has(w)) continue;
-    if (DOLGU.has(w) || SORU_DOLGUSU.has(w) || MARKALAR.has(w)) continue;
-    if (/^[0-9]+$/.test(w)) continue;
-    if (w.length <= 2) continue;
+    if (dolguKelimeMi(w)) continue;
     return true;
   }
   return false;
@@ -342,6 +359,40 @@ function tamMuadilBul(mesaj) {
   };
 }
 
+// ── ANA VERSİYON SORGUSU ───────────────────────────────────
+// "Libre var mı?" sorulduğunda kataloğumuzda "Libre Intense" muadili (LİBERA)
+// var ama ikisi AYNI PARFÜM DEĞİL. Bu durumda %100 denmemeli.
+// Sadece eksik kalan kelime bir varyant eki ise (intense, elixir, lucky...)
+// bu tespit çalışır; "black" -> "Black Orchid" gibi durumlarda çalışmaz.
+const VARYANT_KELIMELERI = new Set([
+  'intense','intensely','intensive','extreme','extrait','elixir','absolu','absolute',
+  'extract','lucky','noir','blanc','aura','flame','spirit','sport','ocean','oceanic',
+  'profondo','fraiche','legere','limited','edition','exclusif','exclusive','privee','prive',
+]);
+
+function anaVersiyonBul(mesaj) {
+  const kelimeler = normalize(mesaj).split(' ').filter(Boolean);
+  const anlamli = kelimeler.filter((w) => !dolguKelimeMi(w));
+  if (!anlamli.length) return null;
+  if (!anlamli.some((w) => w.length >= 5)) return null;
+
+  const adaylar = [];
+  for (const u of URUNLER) {
+    const ad = urunAdiKelimeleri(u.original);
+    if (ad.length < 2 || anlamli.length >= ad.length) continue;
+    let tut = true;
+    for (let i = 0; i < anlamli.length; i++) {
+      if (!kelimeEslesmesi(ad[i], [anlamli[i]])) { tut = false; break; }
+    }
+    if (!tut) continue;
+    const eksik = ad.slice(anlamli.length);
+    if (!eksik.every((w) => VARYANT_KELIMELERI.has(w))) continue;
+    adaylar.push(u);
+  }
+  // Birden fazla aday varsa hangisi olduğu belirsizdir; iddiada bulunma.
+  return adaylar.length === 1 ? adaylar[0] : null;
+}
+
 // ── SORGU TİPİ TESPİTİ ─────────────────────────────────────
 // "narenciyeli ferah kokular öner" bir parfüm ADI sorgusu değildir;
 // bu tür mesajlara "Maalesef bu parfümün tam muadili bulunmuyor" diye
@@ -398,7 +449,12 @@ function kendiUrunBul(mesaj) {
   const kelimeler = normalize(mesaj).split(' ').filter(Boolean);
   // Rakamlar BİLEREK elenmiyor: "Santal 33" başka bir parfümdür,
   // kendi SANTAL ürünümüzle karıştırılmamalı.
-  const anlamli = kelimeler.filter((w) => !SORU_DOLGUSU.has(w) && !DOLGU.has(w));
+  const soruDolgusu = (w) => {
+    if (SORU_DOLGUSU.has(w) || DOLGU.has(w)) return true;
+    const m = w.match(/^(.+?)(mi|mu|mis|mus)$/);
+    return !!(m && m[1].length >= 2 && (SORU_DOLGUSU.has(m[1]) || DOLGU.has(m[1])));
+  };
+  const anlamli = kelimeler.filter((w) => !soruDolgusu(w));
   if (!anlamli.length) return null;
 
   for (const u of URUNLER) {
@@ -510,7 +566,8 @@ exports.handler = async (event) => {
   const bulunan = eslesme ? eslesme.urun : null;
   const yazimHatasi = !!(eslesme && eslesme.mesafe > 0);
   const varyant = !!(eslesme && eslesme.varyant);
-  const notaSorgusu = !kendiUrun && !eslesme && notaSorgusuMu(mesaj);
+  const anaVersiyon = !kendiUrun && !eslesme ? anaVersiyonBul(mesaj) : null;
+  const notaSorgusu = !kendiUrun && !eslesme && !anaVersiyon && notaSorgusuMu(mesaj);
   const kilavuz = kendiUrun
     ? `[SİSTEM KARARI — KOŞULSUZ UY]
 Müşteri KENDİ ÜRÜNÜMÜZ olan "${kendiUrun.voila}" hakkında soruyor. Bu bir muadil ARAMA sorgusu DEĞİLDİR.
@@ -547,6 +604,17 @@ Müşteri mesajı: `
 Bu parfümün kataloğumuzda TAM MUADİLİ VAR: "${bulunan.voila}" (orijinali: "${bulunan.original}").
 ${yazimHatasi ? `Müşteri parfüm adını hatalı yazmış; doğru parfüm "${bulunan.original}". Doğru yazımı doğal biçimde kullan, yazım hatasını düzelttiğini ayrıca belirtme.` : ''}
 Yanıtına "✅ %100 Uyum — **${bulunan.voila}**" ile başla ve bu ürünü tanıt.
+[/SİSTEM KARARI]
+
+Müşteri mesajı: `
+    : anaVersiyon
+    ? `[SİSTEM KARARI — KOŞULSUZ UY]
+Müşterinin sorduğu parfümün KENDİSİNİN muadili kataloğumuzda YOK.
+Kataloğumuzdaki "${anaVersiyon.voila}", o parfümün "${anaVersiyon.original}" versiyonunun muadilidir.
+Bu iki parfüm AYNI DEĞİLDİR — "✅" işaretini ve "%100" ifadesini KESİNLİKLE KULLANMA.
+"${anaVersiyon.voila}" ürününün hangi versiyonun muadili olduğunu açıkça söyle,
+sorulan versiyona da en yakın seçenek olduğunu belirt.
+Yanıtına "🔥 %85 — **${anaVersiyon.voila}**" ile başla, sonra ürünü kısaca tanıt.
 [/SİSTEM KARARI]
 
 Müşteri mesajı: `
