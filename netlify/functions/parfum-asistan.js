@@ -115,6 +115,12 @@ ${URUNLER.map((u, i) => `${i + 1}. Orijinal: "${u.original}" → Voilà D'or: "$
 
 8. **KESİNLİKLE YASAK:** Yanıtlarında hiçbir zaman # (diyez) işareti kullanma. Başlık yapma. Sadece düz metin ve **kalın** yazı kullan.
 
+9a. **Yazım hataları.** Müşteriler parfüm adlarını sıklıkla hatalı ya da Türkçe okunuşuyla yazar
+   ("Oud for gratnes", "naksos", "narkotik", "tobbaco vanille"). Sistem bunları kod tarafında zaten
+   düzeltip sana bildiriyor; sen de doğru parfüm adını doğal biçimde kullan.
+   Müşterinin yazım hatasını düzelttiğini ayrıca söyleme, sadece doğru adı kullan.
+   Sana bir [SİSTEM KARARI] gelmediyse kendi kafandan zorlama benzetme yapma.
+
 9. **ASLA "tanımıyorum" DEME.** Katalogda olmayan bir parfüm sorulursa, o parfümün bilinen koku notalarını kendi bilgine dayanarak analiz et ve kataloğumuzdan en yakın 2-3 ürünü öner. "Bu ürünü tanımıyorum", "bilmiyorum" gibi ifadeler kullanma - her zaman yardımcı ol.
 
 10. **TUTARLILIK ZORUNLU - EN ÖNEMLİ KURAL.**
@@ -151,71 +157,215 @@ function normalize(s) {
     .trim();
 }
 
-// Marka/dolgu kelimeleri: eşleşmede sayılmaz
-const DOLGU = new Set(['by','for','men','women','unisex','edp','edt','eau','de','du','la','le','the','parfum','parfums','toilette','intense']);
-
-// "BLACK ORCHID BY TOM FORD" -> ['black','orchid']
-function urunAdiKelimeleri(original) {
-  const adKismi = String(original).split(/\s+BY\s+/i)[0];
-  return normalize(adKismi).split(' ').filter((w) => w && !DOLGU.has(w));
-}
-
-// Müşterinin sorduğu parfüm katalogda TAM olarak var mı?
-// Kural: ürün adının TÜM anlamlı kelimeleri soruda geçmeli.
-// Birden fazla eşleşirse en uzun (en spesifik) olan kazanır.
-function tamMuadilBul(mesaj) {
-  const sorguKelimeleri = new Set(normalize(mesaj).split(' ').filter(Boolean));
-  let enIyi = null;
-  for (const u of URUNLER) {
-    const kelimeler = urunAdiKelimeleri(u.original);
-    if (!kelimeler.length) continue;
-    // En az bir kelime 4+ harf olmalı (rastgele eşleşmeyi önler)
-    if (!kelimeler.some((k) => k.length >= 4)) continue;
-    if (!kelimeler.every((k) => sorguKelimeleri.has(k))) continue;
-    const puan = kelimeler.join('').length;
-    if (!enIyi || puan > enIyi.puan) enIyi = { urun: u, puan };
-  }
-  return enIyi ? enIyi.urun : null;
-}
-
-// ── KENDİ ÜRÜNÜMÜZ TESPİTİ (kod tarafı, deterministik) ─────
-// Müşteri "KHAMSİN" gibi kendi ürün adımızı yazdığında sistem bunu
-// aranan bir orijinal parfüm sanıp "muadili yok" diyordu. Bu karar
-// artık kodda veriliyor.
+// Marka/dolgu kelimeleri: eşleşmede sayılmaz.
+// 'intense' BİLEREK yok: "Oud Wood" ile "Oud Wood Intense" farklı parfümlerdir.
+const DOLGU = new Set(['by','for','men','women','unisex','edp','edt','eau','de','du','la','le','the','parfum','parfums','toilette']);
 
 // Orijinal marka adının cevapta geçmesini istemiyorsanız false yapın.
 const ORIJINAL_ADI_GOSTER = true;
 
-// Soru kalıbı kelimeleri: eşleşme kontrolünde yok sayılır
+// Soru kalıbı / sohbet kelimeleri: eşleşmede anlamlı sayılmaz
 const SORU_DOLGUSU = new Set([
   'voila', 'dor', 'vd', 'paris',
-  'ne', 'nedir', 'nasil', 'bir', 'bu', 'su', 'o',
-  'koku', 'kokusu', 'kokuyor', 'parfum', 'parfumu', 'parfumun',
-  'hakkinda', 'anlat', 'anlatir', 'misin', 'bilgi', 'ver', 'verir',
-  'muadil', 'muadili', 'muadilin', 'karsiligi', 'esdegeri',
-  'var', 'mi', 'mu', 'hangi', 'kimin', 'icin', 'kime', 'uygun',
+  'ne', 'nedir', 'nasil', 'bir', 'bu', 'su', 'o', 'da', 'de', 'ki',
+  'koku', 'kokusu', 'kokan', 'kokuyor', 'parfum', 'parfumu', 'parfumun',
+  'hakkinda', 'anlat', 'anlatir', 'misin', 'bilgi', 'ver', 'verir', 'bana',
+  'muadil', 'muadili', 'muadilin', 'karsiligi', 'esdegeri', 'benzer', 'benzeri',
+  'var', 'mi', 'mu', 'hangi', 'kimin', 'icin', 'kime', 'uygun', 'olan', 'olsun',
   'urun', 'urunu', 'stokta', 'fiyat', 'fiyati', 'notalari', 'nota',
+  'gibi', 'tarzi', 'tarzinda', 'istiyorum', 'ariyorum', 'arayan', 'lazim',
+  'seviyorum', 'tavsiye', 'oneri', 'onerir', 'sey', 'birsey', 'acaba', 'lutfen',
 ]);
 
-// Sorgu, sadece bir katalog ürün adımızdan (+ soru dolgusundan) oluşuyorsa
-// o ürünü döndürür. "Santal 33" gibi başka anlamlı kelime içeren sorgularda
-// tetiklenmez — orada normal muadil araması çalışmaya devam eder.
-function kendiUrunBul(mesaj) {
-  const kelimeler = normalize(mesaj).split(' ').filter(Boolean);
-  const anlamli = kelimeler.filter((w) => !SORU_DOLGUSU.has(w) && !DOLGU.has(w));
-  if (!anlamli.length) return null;
-  const sorgu = anlamli.join(' ');
+// Katalogdaki orijinal parfümlerin markaları ("... BY TOM FORD" -> tom, ford).
+// Sorguda marka adı geçmesi normaldir, "fazladan kelime" sayılmaz.
+const MARKALAR = new Set();
+for (const u of URUNLER) {
+  const markaKismi = String(u.original).split(/\s+BY\s+/i)[1];
+  if (markaKismi) {
+    for (const w of normalize(markaKismi).split(' ')) if (w) MARKALAR.add(w);
+  }
+}
+for (const w of ['tom','ford','ysl','yves','saint','laurent','jpg','jean','paul','gaultier','giorgio','armani','maison','francis','kurkdjian','mfk','victorias','secret','vs','carolina','herrera','ch','roberto','cavalli','louis','vuitton','lv','marc','antoine','barrois','tiziana','terenzi','essential','ex','nihilo','bdk','orto','parisi','de','marly','pdm','clive','christian','paco','rabanne','bvlgari','burberry','lancome','versace','prada','chanel','dior','creed','xerjoff','initio','montale','mancera','nishane','amouage','memo','crivelli','hermes']) MARKALAR.add(w);
+
+// Sorguda ürün adına ait olmayan, marka/dolgu da olmayan kelime var mı?
+// ("Eros Flame" -> 'flame' fazladan => bu, Eros'un bir varyantıdır, birebir aynısı değil)
+function fazladanKelimeVar(sorguKelimeleri, kullanilanlar) {
+  for (const w of sorguKelimeleri) {
+    if (kullanilanlar.has(w)) continue;
+    if (DOLGU.has(w) || SORU_DOLGUSU.has(w) || MARKALAR.has(w)) continue;
+    if (/^[0-9]+$/.test(w)) continue;
+    if (w.length <= 2) continue;
+    return true;
+  }
+  return false;
+}
+
+// "BLACK ORCHID BY TOM FORD" -> ['black','orchid']
+// Tek harfli, sadece rakamdan oluşan ve dolgu kelimeleri zorunlu sayılmaz
+// ("Ombre Leather 2018" -> ombre + leather).
+function urunAdiKelimeleri(original) {
+  const adKismi = String(original).split(/\s+BY\s+/i)[0];
+  return normalize(adKismi)
+    .split(' ')
+    .filter((w) => w && w.length > 1 && !/^[0-9]+$/.test(w) && !DOLGU.has(w));
+}
+
+// Ürün adı eşleşme için yeterince ayırt edici mi?
+function adYeterliMi(kelimeler) {
+  if (!kelimeler.length) return false;
+  return kelimeler.some((k) => k.length >= 4) || kelimeler.join('').length >= 5;
+}
+
+// ── YAZIM TOLERANSI ────────────────────────────────────────
+// Müşteri "Oud for gratnes" yazdığında "Oud For Greatness"ı bulabilmeli;
+// ama alakasız kelimeler alakasız parfümlerle EŞLEŞMEMELİ.
+// Bu yüzden tolerans kelime uzunluğuna göre dar tutulur.
+
+// Türk müşteriler yabancı adları duydukları gibi yazıyor:
+// "naksos" = Naxos, "narkotik" = Narcotique, "tobbaco" = Tobacco.
+// Bu ses karşılıklarını her iki tarafta da aynı şekilde sadeleştiriyoruz.
+function fonetik(w) {
+  return String(w)
+    .replace(/ph/g, 'f')
+    .replace(/x/g, 'ks')
+    .replace(/q/g, 'k')
+    .replace(/w/g, 'v')
+    .replace(/c/g, 'k')
+    .replace(/gh/g, 'g')
+    .replace(/ou/g, 'u')
+    .replace(/y/g, 'i')
+    .replace(/(.)\1+/g, '$1')
+    .replace(/e$/, '');
+}
+
+function levenshtein(a, b) {
+  if (a === b) return 0;
+  const m = a.length, n = b.length;
+  if (!m) return n;
+  if (!n) return m;
+  let onceki = new Array(n + 1);
+  let simdiki = new Array(n + 1);
+  for (let j = 0; j <= n; j++) onceki[j] = j;
+  for (let i = 1; i <= m; i++) {
+    simdiki[0] = i;
+    for (let j = 1; j <= n; j++) {
+      const bedel = a.charCodeAt(i - 1) === b.charCodeAt(j - 1) ? 0 : 1;
+      simdiki[j] = Math.min(simdiki[j - 1] + 1, onceki[j] + 1, onceki[j - 1] + bedel);
+    }
+    const t = onceki; onceki = simdiki; simdiki = t;
+  }
+  return onceki[n];
+}
+
+// Kısa kelimelerde hata payı yok; uzadıkça biraz açılır.
+function tolerans(kelime) {
+  const L = kelime.length;
+  if (L <= 4) return 0;   // "eros", "oud", "wood" -> birebir olmalı
+  if (L <= 7) return 1;   // "sauvage" -> "savage"
+  if (L <= 11) return 2;  // "greatness" -> "gratnes"
+  return 3;
+}
+
+// Katalog kelimesi, sorgu kelimelerinden hangisine ne kadar yakın?
+// Eşleşme yoksa null.
+function kelimeEslesmesi(katalogKelime, sorguKelimeleri) {
+  const kf = fonetik(katalogKelime);
+  const tol = tolerans(kf);
+  let enIyi = null;
+  for (const s of sorguKelimeleri) {
+    if (s === katalogKelime) return { mesafe: 0, kelime: s };
+    const sf = fonetik(s);
+    if (sf === kf) { if (!enIyi || enIyi.mesafe > 0) enIyi = { mesafe: 0, kelime: s }; continue; }
+    if (tol === 0) continue;
+    if (Math.abs(sf.length - kf.length) > tol) continue;
+    const d = levenshtein(kf, sf);
+    if (d <= tol && (enIyi === null || d < enIyi.mesafe)) enIyi = { mesafe: d, kelime: s };
+  }
+  return enIyi;
+}
+
+// Ürünün TÜM kelimeleri sorguda (yazım toleransıyla) geçiyor mu?
+// Güvenlik: çok kelimeli adlarda en az bir kelime birebir tutmalı.
+function adEslesmesi(adKelimeleri, sorguKelimeleri) {
+  let toplam = 0;
+  let birebirVar = false;
+  const kullanilan = new Set();
+  for (const k of adKelimeleri) {
+    const e = kelimeEslesmesi(k, sorguKelimeleri);
+    if (!e) return null;
+    if (e.mesafe === 0) birebirVar = true;
+    toplam += e.mesafe;
+    kullanilan.add(e.kelime);
+  }
+  if (adKelimeleri.length > 1 && !birebirVar) return null;
+  if (toplam > 3) return null;
+  return { mesafe: toplam, kullanilan };
+}
+
+// Müşterinin sorduğu parfüm katalogda var mı?
+// Sıralama: önce en çok kelimesi tutan (en spesifik) ürün, sonra en az yazım hatası.
+// Dönüş: { urun, mesafe, varyant } | null
+//   mesafe > 0  -> yazım hatası toleransıyla bulundu
+//   varyant     -> sorguda ada ait olmayan kelime var (ör. "Eros Flame")
+function tamMuadilBul(mesaj) {
+  const sorguKelimeleri = normalize(mesaj).split(' ').filter(Boolean);
+  if (!sorguKelimeleri.length) return null;
 
   let enIyi = null;
   for (const u of URUNLER) {
-    const adKelimeleri = normalize(u.voila).split(' ').filter((w) => w && !DOLGU.has(w));
-    if (!adKelimeleri.length) continue;
-    if (!adKelimeleri.some((k) => k.length >= 4)) continue;
-    if (adKelimeleri.join(' ') !== sorgu) continue;
-    const puan = adKelimeleri.join('').length;
-    if (!enIyi || puan > enIyi.puan) enIyi = { urun: u, puan };
+    const kelimeler = urunAdiKelimeleri(u.original);
+    if (!adYeterliMi(kelimeler)) continue;
+    const e = adEslesmesi(kelimeler, sorguKelimeleri);
+    if (!e) continue;
+    const puan = kelimeler.join('').length;
+    const daha =
+      !enIyi ||
+      puan > enIyi.puan ||
+      (puan === enIyi.puan && e.mesafe < enIyi.mesafe);
+    if (daha) enIyi = { urun: u, mesafe: e.mesafe, puan, kullanilan: e.kullanilan };
   }
-  return enIyi ? enIyi.urun : null;
+  if (!enIyi) return null;
+  return {
+    urun: enIyi.urun,
+    mesafe: enIyi.mesafe,
+    varyant: fazladanKelimeVar(sorguKelimeleri, enIyi.kullanilan),
+  };
+}
+
+// ── KENDİ ÜRÜNÜMÜZ TESPİTİ ─────────────────────────────────
+// Müşteri "KHAMSİN" gibi kendi ürün adımızı yazdığında sistem bunu
+// aranan bir orijinal parfüm sanıp "muadili yok" diyordu.
+// Burada tolerans BİLEREK çok dar: kendi adlarımız kısa ve uydurma
+// olduğu için gerçek parfümlere yakın düşebiliyor
+// (Delina/CELİNA, Gabrielle/GABRİEL, Hypnose/HYPNO) — bunlar eşleşmemeli.
+function kendiUrunBul(mesaj) {
+  const kelimeler = normalize(mesaj).split(' ').filter(Boolean);
+  // Rakamlar BİLEREK elenmiyor: "Santal 33" başka bir parfümdür,
+  // kendi SANTAL ürünümüzle karıştırılmamalı.
+  const anlamli = kelimeler.filter((w) => !SORU_DOLGUSU.has(w) && !DOLGU.has(w));
+  if (!anlamli.length) return null;
+
+  for (const u of URUNLER) {
+    const ad = normalize(u.voila).split(' ').filter((w) => w && w.length > 1 && !DOLGU.has(w));
+    if (!adYeterliMi(ad)) continue;
+    // Sorgu, ürün adının DIŞINDA anlamlı kelime içermemeli
+    // ("Santal 33" burada tetiklenmez, normal muadil aramasına gider).
+    if (ad.length !== anlamli.length) continue;
+
+    let tut = true;
+    for (let i = 0; i < ad.length; i++) {
+      const a = ad[i];
+      const b = anlamli[i];
+      if (a === b) continue;
+      // Sadece 7+ harfli adlarda tek harflik yazım hatası affedilir
+      if (a.length >= 7 && Math.abs(a.length - b.length) <= 1 && levenshtein(a, b) <= 1) continue;
+      tut = false;
+      break;
+    }
+    if (tut) return u;
+  }
+  return null;
 }
 
 // ── Basit Rate Limiter ─────────────────────────────────────
@@ -301,7 +451,10 @@ exports.handler = async (event) => {
   const kendiUrun = kendiUrunBul(mesaj);
 
   // ── Kod tarafı tam-muadil kararı (model bunu DEĞİŞTİREMEZ) ──
-  const bulunan = kendiUrun ? null : tamMuadilBul(mesaj);
+  const eslesme = kendiUrun ? null : tamMuadilBul(mesaj);
+  const bulunan = eslesme ? eslesme.urun : null;
+  const yazimHatasi = !!(eslesme && eslesme.mesafe > 0);
+  const varyant = !!(eslesme && eslesme.varyant);
   const kilavuz = kendiUrun
     ? `[SİSTEM KARARI — KOŞULSUZ UY]
 Müşteri KENDİ ÜRÜNÜMÜZ olan "${kendiUrun.voila}" hakkında soruyor. Bu bir muadil ARAMA sorgusu DEĞİLDİR.
@@ -323,8 +476,20 @@ ${ORIJINAL_ADI_GOSTER ? `4) "${kendiUrun.original}" parfümünün muadili olduğ
 
 Müşteri mesajı: `
     : bulunan
+    ? varyant
     ? `[SİSTEM KARARI — KOŞULSUZ UY]
+Müşterinin sorduğu parfüm, "${bulunan.original}" parfümünün bir varyantı (flanker) görünüyor —
+sorguda ana ada ait olmayan kelimeler var. Bu, birebir aynı parfüm DEĞİLDİR.
+Kataloğumuzda ANA versiyonun muadili var: "${bulunan.voila}".
+"✅" işaretini ve "%100" ifadesini KESİNLİKLE KULLANMA.
+Yanıtına "🔥 %85 — **${bulunan.voila}**" ile başla; bunun aradığı parfümün ana versiyonunun
+muadili olduğunu ve en yakın alternatif olduğunu kısaca belirt, sonra ürünü tanıt.
+[/SİSTEM KARARI]
+
+Müşteri mesajı: `
+    : `[SİSTEM KARARI — KOŞULSUZ UY]
 Bu parfümün kataloğumuzda TAM MUADİLİ VAR: "${bulunan.voila}" (orijinali: "${bulunan.original}").
+${yazimHatasi ? `Müşteri parfüm adını hatalı yazmış; doğru parfüm "${bulunan.original}". Doğru yazımı doğal biçimde kullan, yazım hatasını düzelttiğini ayrıca belirtme.` : ''}
 Yanıtına "✅ %100 Uyum — **${bulunan.voila}**" ile başla ve bu ürünü tanıt.
 [/SİSTEM KARARI]
 
