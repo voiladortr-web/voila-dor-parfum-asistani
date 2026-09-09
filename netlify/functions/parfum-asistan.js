@@ -73,7 +73,17 @@ ${URUNLER.map((u, i) => `${i + 1}. Orijinal: "${u.original}" → Voilà D'or: "$
 
 ## GÖREVLER VE KURALLAR
 
+0. **ÖNCELİKLİ KURAL — KENDİ ÜRÜNLERİMİZ.**
+   Katalogdaki "Voilà D'or" adlarının kendisi (KHAMSİN, CARAT, VELORA, NAXOR, SAVOR, DİGOR vb.)
+   müşteri tarafından yazılabilir. Bu bir muadil ARAMA sorgusu DEĞİLDİR — sorulan ürün zaten bizimdir.
+   Böyle bir durumda "Maalesef bu parfümün tam muadili kataloğumuzda bulunmuyor", "tanımıyorum",
+   "kataloğumuzda yok" gibi ifadeler KESİNLİKLE YASAKTIR ve alternatif arama yapılmaz.
+   Bunun yerine o ürünün kendi tanıtımı yapılır: koku ailesi, karakteri, nota piramidi,
+   hangi parfümün muadili olduğu, kime uygun olduğu ve sonunda benzer karakterde 1–2 ürün önerisi.
+   Bu durumda "%100" ve "✅" ifadeleri kullanılmaz; yüzde verilmez.
+
 1. **SADECE Voilà D'or ürünlerini öner.** Başka hiçbir marka, parfüm adı, web sitesi veya mağaza söyleme. Kesinlikle yasak.
+   Tek istisna: 0. kural gereği kendi ürünümüz tanıtılırken, o ürünün hangi parfümün muadili olduğu belirtilebilir.
 
 2. **Tam muadil sorgusu — %100 KURALI ÇOK KATI:**
    "✅ %100 Uyum" SADECE ve SADECE, müşterinin yazdığı parfümün TAM ADI kataloğun "Orijinal" alanında
@@ -168,6 +178,46 @@ function tamMuadilBul(mesaj) {
   return enIyi ? enIyi.urun : null;
 }
 
+// ── KENDİ ÜRÜNÜMÜZ TESPİTİ (kod tarafı, deterministik) ─────
+// Müşteri "KHAMSİN" gibi kendi ürün adımızı yazdığında sistem bunu
+// aranan bir orijinal parfüm sanıp "muadili yok" diyordu. Bu karar
+// artık kodda veriliyor.
+
+// Orijinal marka adının cevapta geçmesini istemiyorsanız false yapın.
+const ORIJINAL_ADI_GOSTER = true;
+
+// Soru kalıbı kelimeleri: eşleşme kontrolünde yok sayılır
+const SORU_DOLGUSU = new Set([
+  'voila', 'dor', 'vd', 'paris',
+  'ne', 'nedir', 'nasil', 'bir', 'bu', 'su', 'o',
+  'koku', 'kokusu', 'kokuyor', 'parfum', 'parfumu', 'parfumun',
+  'hakkinda', 'anlat', 'anlatir', 'misin', 'bilgi', 'ver', 'verir',
+  'muadil', 'muadili', 'muadilin', 'karsiligi', 'esdegeri',
+  'var', 'mi', 'mu', 'hangi', 'kimin', 'icin', 'kime', 'uygun',
+  'urun', 'urunu', 'stokta', 'fiyat', 'fiyati', 'notalari', 'nota',
+]);
+
+// Sorgu, sadece bir katalog ürün adımızdan (+ soru dolgusundan) oluşuyorsa
+// o ürünü döndürür. "Santal 33" gibi başka anlamlı kelime içeren sorgularda
+// tetiklenmez — orada normal muadil araması çalışmaya devam eder.
+function kendiUrunBul(mesaj) {
+  const kelimeler = normalize(mesaj).split(' ').filter(Boolean);
+  const anlamli = kelimeler.filter((w) => !SORU_DOLGUSU.has(w) && !DOLGU.has(w));
+  if (!anlamli.length) return null;
+  const sorgu = anlamli.join(' ');
+
+  let enIyi = null;
+  for (const u of URUNLER) {
+    const adKelimeleri = normalize(u.voila).split(' ').filter((w) => w && !DOLGU.has(w));
+    if (!adKelimeleri.length) continue;
+    if (!adKelimeleri.some((k) => k.length >= 4)) continue;
+    if (adKelimeleri.join(' ') !== sorgu) continue;
+    const puan = adKelimeleri.join('').length;
+    if (!enIyi || puan > enIyi.puan) enIyi = { urun: u, puan };
+  }
+  return enIyi ? enIyi.urun : null;
+}
+
 // ── Basit Rate Limiter ─────────────────────────────────────
 const rateLimitStore = {};
 const MAKS_ISTEK_SAAT = 60;
@@ -247,9 +297,32 @@ exports.handler = async (event) => {
     temizGecmis.pop();
   }
 
+  // ── Önce: sorulan şey KENDİ ürünümüz mü? ───────────────────
+  const kendiUrun = kendiUrunBul(mesaj);
+
   // ── Kod tarafı tam-muadil kararı (model bunu DEĞİŞTİREMEZ) ──
-  const bulunan = tamMuadilBul(mesaj);
-  const kilavuz = bulunan
+  const bulunan = kendiUrun ? null : tamMuadilBul(mesaj);
+  const kilavuz = kendiUrun
+    ? `[SİSTEM KARARI — KOŞULSUZ UY]
+Müşteri KENDİ ÜRÜNÜMÜZ olan "${kendiUrun.voila}" hakkında soruyor. Bu bir muadil ARAMA sorgusu DEĞİLDİR.
+"Maalesef", "tam muadili yok", "kataloğumuzda bulunmuyor", "tanımıyorum", "%100" ve "✅" ifadelerini KULLANMA.
+Alternatif ürün ARAMA, yüzde VERME. Aşağıdaki ürünün tanıtımını yap:
+
+Ürün: ${kendiUrun.voila}
+Orijinali: ${kendiUrun.original}
+Katalog açıklaması: ${kendiUrun.aciklama}
+
+Yanıt sırası (kısa tut, toplam 150 kelimeyi geçme):
+1) **${kendiUrun.voila}** ve koku ailesi
+2) İki cümlelik karakter tarifi
+3) Üst / Kalp / Dip notaları (açıklamadaki notaları kullan)
+${ORIJINAL_ADI_GOSTER ? `4) "${kendiUrun.original}" parfümünün muadili olduğunu belirt` : '4) Bu adımı atla'}
+5) Kime ve hangi kullanıma uygun olduğu (1 cümle)
+6) Katalogdan benzer karakterde 1–2 ürün önerisi ve nazik bir sipariş teşviki
+[/SİSTEM KARARI]
+
+Müşteri mesajı: `
+    : bulunan
     ? `[SİSTEM KARARI — KOŞULSUZ UY]
 Bu parfümün kataloğumuzda TAM MUADİLİ VAR: "${bulunan.voila}" (orijinali: "${bulunan.original}").
 Yanıtına "✅ %100 Uyum — **${bulunan.voila}**" ile başla ve bu ürünü tanıt.
