@@ -101,7 +101,16 @@ ${URUNLER.map((u, i) => `${i + 1}. Orijinal: "${u.original}" → Voilà D'or: "$
 
 3. **Benzer ürün önerisi:** Tam muadil yoksa, koku notalarını analiz ederek en yakın 2–3 ürünü öner. Gerçekçi benzerlik yüzdesi ver (%60–%95 arası).
 
-4. **Nota bazlı sorgu:** "Portakal çiçeği seviyorum", "oud içeren bir şey istiyorum" gibi sorularda kataloğumuzdan o notayı içeren ürünleri listele.
+4. **Nota / tarif bazlı sorgu:** "Portakal çiçeği seviyorum", "narenciyeli ferah kokular öner",
+   "oud içeren bir şey istiyorum" gibi mesajlarda ortada aranan bir parfüm ADI yoktur.
+   Bu tür mesajlarda "Maalesef bu parfümün tam muadili kataloğumuzda bulunmuyor" veya benzeri
+   bir cümle KURMA — saçma durur. Yüzde de verme; yüzde sadece belirli bir parfümle
+   karşılaştırma yapılırken anlamlıdır. Müşterinin tarifini kısaca tekrar edip kataloğumuzdan
+   o tarife uyan 2–3 ürünü öner.
+
+4a. **Her zaman mesajı önce anla.** Cevabın açılış cümlesi, müşterinin ne sorduğuna uymalı:
+   parfüm adı sorusu, koku tarifi, karşılaştırma, sohbet veya genel bir soru olabilir.
+   Ezbere kalıp cümleyle başlama.
 
 5. **Her öneri için:** Kısa (1–2 cümle), samimi ve alışverişi teşvik eden bir açıklama yaz.
 
@@ -333,6 +342,52 @@ function tamMuadilBul(mesaj) {
   };
 }
 
+// ── SORGU TİPİ TESPİTİ ─────────────────────────────────────
+// "narenciyeli ferah kokular öner" bir parfüm ADI sorgusu değildir;
+// bu tür mesajlara "Maalesef bu parfümün tam muadili bulunmuyor" diye
+// başlamak saçma oluyordu. Tarif/nota sorgularını ayırıyoruz.
+
+const NOTA_KOKLERI = [
+  'narenci','portakal','mandalina','bergamot','limon','greyfurt','misket',
+  'vanily','oud','misk','gul','yasemin','cicek','deri','tutun','odun',
+  'baharat','tarcin','kakule','safran','amber','kehribar','sandal','pacul',
+  'vetiver','tonka','kahve','kakao','cikolata','karamel','pralin','bal',
+  'seker','tatli','meyve','seftali','armut','elma','ananas','cilek','ahududu',
+  'frenk','hindistan','lavanta','nane','ferah','taze','serin','temiz','sabun',
+  'pudra','aldehit','deniz','ozon','yosun','sedir','fistik','badem','incir',
+  'tuberoz','iris','menekse','lotus','orkide','sakayik','neroli','oryantal',
+  'fujer','akuatik','duman','tutsu','olibanum','benzoin','labdanum','opoponaks',
+  'agir','yogun','hafif','kalici','sillage','feminen','maskulen',
+];
+
+const TALEP_KOKLERI = [
+  'oner','tavsiye','ariyor','istiyor','sever','sevdig','begen','bakiyor',
+  'lazim','kokan','kokulu','kokular','kadin','erkek','unisex','yaz','kis',
+  'bahar','sonbahar','gunduz','gece','aksam','ofis','gunluk','hediye','spor',
+  'romantik','davet','dugun','genc','olgun','populer','satan',
+];
+
+function kokEslesme(kelimeler, kokler) {
+  let n = 0;
+  for (const k of kelimeler) {
+    for (const kok of kokler) {
+      if (k.length >= 3 && k.startsWith(kok)) { n++; break; }
+    }
+  }
+  return n;
+}
+
+// Mesaj, belirli bir parfüm adı değil; koku tarifi / nota isteği mi?
+// Marka adı geçiyorsa tarif sorgusu SAYILMAZ (ör. "vanilyalı bir Tom Ford").
+function notaSorgusuMu(mesaj) {
+  const kelimeler = normalize(mesaj).split(' ').filter(Boolean);
+  if (!kelimeler.length) return false;
+  if (kelimeler.some((w) => MARKALAR.has(w))) return false;
+  const nota = kokEslesme(kelimeler, NOTA_KOKLERI);
+  const talep = kokEslesme(kelimeler, TALEP_KOKLERI);
+  return nota >= 1 || talep >= 2;
+}
+
 // ── KENDİ ÜRÜNÜMÜZ TESPİTİ ─────────────────────────────────
 // Müşteri "KHAMSİN" gibi kendi ürün adımızı yazdığında sistem bunu
 // aranan bir orijinal parfüm sanıp "muadili yok" diyordu.
@@ -455,6 +510,7 @@ exports.handler = async (event) => {
   const bulunan = eslesme ? eslesme.urun : null;
   const yazimHatasi = !!(eslesme && eslesme.mesafe > 0);
   const varyant = !!(eslesme && eslesme.varyant);
+  const notaSorgusu = !kendiUrun && !eslesme && notaSorgusuMu(mesaj);
   const kilavuz = kendiUrun
     ? `[SİSTEM KARARI — KOŞULSUZ UY]
 Müşteri KENDİ ÜRÜNÜMÜZ olan "${kendiUrun.voila}" hakkında soruyor. Bu bir muadil ARAMA sorgusu DEĞİLDİR.
@@ -494,12 +550,31 @@ Yanıtına "✅ %100 Uyum — **${bulunan.voila}**" ile başla ve bu ürünü ta
 [/SİSTEM KARARI]
 
 Müşteri mesajı: `
+    : notaSorgusu
+    ? `[SİSTEM KARARI — KOŞULSUZ UY]
+Bu mesaj belirli bir parfüm ADI sorgusu DEĞİLDİR; müşteri koku tarifi / nota isteği yazmış.
+Bu yüzden "Maalesef bu parfümün tam muadili kataloğumuzda bulunmuyor", "muadili yok",
+"tanımıyorum" gibi cümleler KESİNLİKLE YASAKTIR — ortada aranan bir parfüm adı yok.
+"✅", "%100" ve yüzde ifadelerinin hiçbirini KULLANMA; burada yüzde anlamsızdır.
+
+Müşterinin tarifini tekrar ederek kısa bir cümleyle başla
+(ör. "Narenciyeli ve ferah kokular için koleksiyonumuzdan öneriler:"),
+sonra bu tarife en uyan 2–3 ürünü listele. Her ürün için ürün adını kalın yaz ve
+tarifin hangi notalarla karşılandığını 1–2 cümlede anlat. Sonunda nazik bir sipariş teşviki ekle.
+[/SİSTEM KARARI]
+
+Müşteri mesajı: `
     : `[SİSTEM KARARI — KOŞULSUZ UY]
-Bu parfümün kataloğumuzda TAM MUADİLİ YOKTUR.
-Bu yüzden: "✅" işaretini ve "%100" ifadesini KESİNLİKLE KULLANMA. "tam muadili var" DEME.
-Yanıtına "Maalesef bu parfümün tam muadili kataloğumuzda bulunmuyor." cümlesiyle başla,
-ardından en yakın 2 alternatifi 🔥 %85 / 🔥 %75 / ⭐ %65 aralığında öner.
-Marka aynı diye eşleştirme yapma; sadece koku notalarına bak.
+Müşterinin mesajında kataloğumuzdaki bir orijinal parfüm adı BULUNAMADI.
+"✅" işaretini ve "%100" ifadesini KESİNLİKLE KULLANMA. "tam muadili var" DEME.
+
+Önce mesajın ne olduğunu anla, sonra ona göre cevapla:
+- Belirli bir PARFÜM ADI sorulmuşsa: "Maalesef bu parfümün tam muadili kataloğumuzda bulunmuyor."
+  cümlesiyle başla, ardından en yakın 2 alternatifi 🔥 %85 / 🔥 %75 / ⭐ %65 aralığında öner.
+  Marka aynı diye eşleştirme yapma; sadece koku notalarına bak.
+- KOKU TARİFİ / NOTA / ÖZELLİK isteniyorsa: "muadili bulunmuyor" DEME, yüzde de verme.
+  Tarifi kısaca tekrar edip ona uyan 2–3 ürünü öner.
+- SOHBET, teşekkür, kargo/fiyat gibi genel bir soruysa: doğal ve kısa cevapla, ürün listeleme.
 [/SİSTEM KARARI]
 
 Müşteri mesajı: `;
